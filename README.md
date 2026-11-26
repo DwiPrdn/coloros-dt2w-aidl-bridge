@@ -164,6 +164,24 @@ adb logcat -s OplusTouchAidlBridge
 
 ---
 
+## Troubleshooting Guide
+
+First, enable live verbose logging:
+```bash
+adb shell setprop persist.vendor.cos.bridge.debug 1
+adb logcat -s OplusTouchAidlBridge InputReader ScreenOffGestureService
+```
+
+| Symptom | Likely Cause | How to Check & Fix |
+| :--- | :--- | :--- |
+| **Pure screen-off DT2W does not wake the phone at all** | **1) Kernel does not support DT2W**, OR **2) Xiaomi `virtual_ps` blocked `fts_gesture_suspend()`**, OR **3) `/dev/xiaomi-touch` permission/SELinux denial** | 1. Check `adb shell ls -lZ /dev/xiaomi-touch` and `adb shell dmesg \| grep -iE 'fts\|xiaomi-touch\|gesture'`. If the kernel never enters `fts_gesture_suspend` or reports `enter proximity suspend`, either your kernel doesn't support DT2W or `virtual_ps` is active.<br>2. Install [**`coloros-r2w-aidl-bridge`**](https://github.com/DwiPrdn/coloros-r2w-aidl-bridge) so `oplus_prox_priority` doesn't activate `virtual_ps`.<br>3. Check `OplusTouchAidlBridge` logs for `Touch_Doubletap_Mode -> 1 OK` and `fts_gesture_switch(..., SYN_CONFIG=5) OK`. |
+| **DT2W works on pure black screen, but requires 3–4 taps (quad-tap) during SOFOD / AOD** | `DozeTapMonitorThread` failed to open `fts_ts` or inject `KEY_WAKEUP` (SELinux `input_device_31_0` / `uhid_device_31_0` denial, or `group input` missing) | With `debug=1`, lock the phone while AOD/SOFOD is showing and verify logs show:<br>`double_tap_enable_indep AOD/Doze mask=0x10000 ... (doze=1)`<br>`DozeTapMonitor: active on /dev/input/eventX`<br>`DozeTapMonitor: SOFOD/AOD double-tap detected! Waking screen...`<br>Check `adb logcat -d \| grep avc:.*hal_oplus_touch_aidl_default`. |
+| **DT2W works only when FOD is disabled, breaks after enrolling a fingerprint** | `fts_gesture_switch` (`EV_SYN/SYN_CONFIG = 5`) failed to write to `fts_ts`, so `ft3519t.ko` `[fts_data + 0x5a8]` (`double_click_on`) stayed `0` | Verify `OplusTouchAidlBridge` logs `fts_gesture_switch(/dev/input/eventX, SYN_CONFIG=5) OK`. If `EACCES`, ensure `.rc` has `group system input` and SELinux allows `input_device_31_0` write. |
+| **Double-tap toggle in ColorOS Settings doesn't stick or does nothing** | `IOplusTouch/default` not found or `isTouchNodeSupport(0, 1)` / `(0, 21)` not returning `1` | Run `adb shell service check vendor.oplus.hardware.touch.IOplusTouch/default` and `--self-test`. Ensure `vendor.oplus.hardware.touch.xml` is in `/vendor/etc/vintf/manifest/`. |
+| **FOD press-and-hold accidentally triggers DT2W wake** | Tap hold duration filter exceeded or double-press too fast | `DozeDoubleTapDetector` triggers on tap-2 **UP** and rejects holds `> 260 ms` (`kMaxTapDurationMs`). You can tighten `kMaxTapDurationMs` (e.g. `200`) in `src/touch_bridge.cpp` and rebuild. |
+
+---
+
 ## License
 
 MIT License — see [LICENSE](LICENSE).
