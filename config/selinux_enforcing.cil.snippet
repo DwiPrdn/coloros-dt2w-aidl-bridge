@@ -1,0 +1,61 @@
+; Audited SELinux Enforcing CIL snippet for OplusTouchAidlBridge v4 (VNDK 31 vendor -> Android 17 plat)
+; Add to vendor_sepolicy.cil and register the service context in vendor_service_contexts:
+;   vendor.oplus.hardware.touch.IOplusTouch/default  u:object_r:hal_oplus_touch_aidl_service:s0
+; And file context in vendor_file_contexts:
+;   /(vendor|system/vendor)/bin/hw/vendor-oplus-hardware-touch-V2-service  u:object_r:hal_oplus_touch_aidl_default_exec:s0
+
+(type hal_oplus_touch_aidl_default)
+(roletype object_r hal_oplus_touch_aidl_default)
+(type hal_oplus_touch_aidl_default_exec)
+(roletype object_r hal_oplus_touch_aidl_default_exec)
+(type hal_oplus_touch_aidl_service)
+(roletype object_r hal_oplus_touch_aidl_service)
+
+(typeattributeset domain (hal_oplus_touch_aidl_default))
+(typeattributeset halserverdomain (hal_oplus_touch_aidl_default))
+(typeattributeset halclientdomain (hal_oplus_touch_aidl_default))
+(typeattributeset file_type (hal_oplus_touch_aidl_default_exec))
+(typeattributeset vendor_file_type (hal_oplus_touch_aidl_default_exec))
+(typeattributeset exec_type (hal_oplus_touch_aidl_default_exec))
+(typeattributeset service_manager_type (hal_oplus_touch_aidl_service))
+(typeattributeset hal_service_type (hal_oplus_touch_aidl_service))
+
+; init domain transition
+(allow init_31_0 hal_oplus_touch_aidl_default_exec (file (read getattr map execute open)))
+(allow init_31_0 hal_oplus_touch_aidl_default (process (transition)))
+(allow hal_oplus_touch_aidl_default hal_oplus_touch_aidl_default_exec (file (read getattr map execute open entrypoint)))
+(dontaudit init_31_0 hal_oplus_touch_aidl_default (process (noatsecure)))
+(allow init_31_0 hal_oplus_touch_aidl_default (process (siginh rlimitinh)))
+(typetransition init_31_0 hal_oplus_touch_aidl_default_exec process hal_oplus_touch_aidl_default)
+
+; AIDL servicemanager registration & client binder IPC
+(allow hal_oplus_touch_aidl_default servicemanager_31_0 (binder (call transfer)))
+(allow servicemanager_31_0 hal_oplus_touch_aidl_default (binder (call transfer)))
+(allow servicemanager_31_0 hal_oplus_touch_aidl_default (dir (search)))
+(allow servicemanager_31_0 hal_oplus_touch_aidl_default (file (read open)))
+(allow servicemanager_31_0 hal_oplus_touch_aidl_default (process (getattr)))
+(allow hal_oplus_touch_aidl_default hal_oplus_touch_aidl_service (service_manager (add find)))
+
+(allow system_server_31_0 hal_oplus_touch_aidl_service (service_manager (find)))
+(allow system_server_31_0 hal_oplus_touch_aidl_default (binder (call transfer)))
+(allow hal_oplus_touch_aidl_default system_server_31_0 (binder (call transfer)))
+(allow system_server_31_0 hal_oplus_touch_aidl_default (fd (use)))
+(allow hal_oplus_touch_aidl_default system_server_31_0 (fd (use)))
+
+(allow system_app_31_0 hal_oplus_touch_aidl_service (service_manager (find)))
+(allow system_app_31_0 hal_oplus_touch_aidl_default (binder (call transfer)))
+(allow hal_oplus_touch_aidl_default system_app_31_0 (binder (call transfer)))
+(allow platform_app_31_0 hal_oplus_touch_aidl_service (service_manager (find)))
+(allow platform_app_31_0 hal_oplus_touch_aidl_default (binder (call transfer)))
+(allow hal_oplus_touch_aidl_default platform_app_31_0 (binder (call transfer)))
+
+; Hardware access: /dev/xiaomi-touch, /dev/input/event* (fts_ts), /dev/uinput fallback, sysfs/proc
+(allow hal_oplus_touch_aidl_default touchfeature_device (chr_file (ioctl read write getattr lock append map open)))
+(allow hal_oplus_touch_aidl_default input_device_31_0 (dir (ioctl read getattr lock open search)))
+(allow hal_oplus_touch_aidl_default input_device_31_0 (chr_file (ioctl read write getattr lock open)))
+(allow hal_oplus_touch_aidl_default uhid_device_31_0 (chr_file (ioctl read write getattr open)))
+(allow hal_oplus_touch_aidl_default sysfs_31_0 (dir (ioctl read getattr lock open search)))
+(allow hal_oplus_touch_aidl_default sysfs_31_0 (file (ioctl read write getattr lock append map open)))
+(allow hal_oplus_touch_aidl_default proc_31_0 (dir (search)))
+(allow hal_oplus_touch_aidl_default proc_31_0 (file (read getattr open)))
+(allow hal_oplus_touch_aidl_default vendor_default_prop_31_0 (file (read getattr map open)))
