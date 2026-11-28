@@ -182,6 +182,16 @@ adb logcat -s OplusTouchAidlBridge InputReader ScreenOffGestureService
 
 ---
 
+## Changelog
+
+### v1.1.1
+- **Fix `ft3519t.ko` atomic-context mutex kernel panic**: `ft3519t.ko`'s `fts_gesture_switch()` executes inside `input_handle_event()`'s `spin_lock_irqsave(&dev->event_lock)` atomic context while calling `mutex_lock()` inside `fts_update_gesture_state()`. Redundant `EV_SYN / SYN_CONFIG` writes during screen-off/wake transitions could contend on that mutex during `fts_ts_resume()`/`fts_ts_suspend()`, triggering `BUG: scheduling while atomic` and a kernel panic.
+- Skips redundant `EV_SYN / SYN_CONFIG` writes whenever the requested gesture switch state (`5` / `4`) is unchanged (`[fts_data + 0x5a8]` persists across suspend/resume).
+- On genuine ON↔OFF state transitions, waits for `/sys/class/touch/touch_dev/suspend_state == 0` (plus an 80 ms post-resume settle guard) before writing `EV_SYN / SYN_CONFIG`.
+- Expanded `--self-test` to verify zero redundant `fts_gesture_switch` writes across AOD/Doze/wake transitions.
+
+---
+
 ## License
 
 MIT License — see [LICENSE](LICENSE).

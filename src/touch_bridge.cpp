@@ -87,6 +87,7 @@ static std::mutex gStateMutex;
 static std::map<int32_t, std::string> gNodeValues;
 static int32_t gLastDoubleTapMode = -1;
 static int32_t gLastGestureSwitchMode = -1;
+static int32_t gGestureSwitchWriteCount = 0;
 static uint32_t gLastIndepMask = 0;
 static bool gNode1Enabled = false;
 static bool gNode1ExplicitOff = false;
@@ -380,11 +381,49 @@ static int openFtsInputDevice(int flags, int32_t* outMaxX, int32_t* outMaxY,
     return fallbackFd;
 }
 
+static int readTouchSuspendState() {
+    int fd = open("/sys/class/touch/touch_dev/suspend_state", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return -1;
+    char buf[16] = {0};
+    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return -1;
+    return atoi(buf);
+}
+
 static bool sendFtsGestureSwitch(bool enable) {
     int32_t swVal = enable ? 5 : 4;
+    // CRITICAL KERNEL-PANIC GUARD (ft3519t.ko):
+    // ft3519t.ko's fts_gesture_switch() runs inside input_handle_event()'s
+    // spin_lock_irqsave(&dev->event_lock) atomic context yet calls mutex_lock()
+    // inside fts_update_gesture_state(). If called while fts_ts_resume() or
+    // fts_ts_suspend() holds that mutex, mutex_lock() sleeps while atomic ->
+    // BUG: scheduling while atomic -> preempt_count corruption -> kernel panic!
+    // Disassembly of ft3519t.ko confirms [fts_data + 0x5a8] (double_click_on) is
+    // NEVER cleared on suspend/resume; therefore skip redundant writes when the
+    // state is unchanged, and on real transitions wait until TP is not suspended.
+    if (gLastGestureSwitchMode == swVal) {
+        return true;
+    }
     if (gDryRun) {
         gLastGestureSwitchMode = swVal;
+        ++gGestureSwitchWriteCount;
         return true;
+    }
+    // Wait briefly if touch controller is suspended or mid-resume before writing
+    // EV_SYN/SYN_CONFIG so fts_update_gesture_state() won't contend on the mutex.
+    bool sawSuspended = false;
+    for (int i = 0; i < 16; ++i) {
+        int susp = readTouchSuspendState();
+        if (susp == 0) {
+            if (sawSuspended) {
+                usleep(80000);  // allow fts_ts_resume() mutex release to complete
+            }
+            break;
+        }
+        if (susp < 0) break;  // node unavailable
+        sawSuspended = true;
+        usleep(25000);
     }
     std::string path;
     int fd = openFtsInputDevice(O_WRONLY | O_NONBLOCK, nullptr, nullptr, nullptr, &path);
@@ -406,6 +445,7 @@ static bool sendFtsGestureSwitch(bool enable) {
         return false;
     }
     gLastGestureSwitchMode = swVal;
+    ++gGestureSwitchWriteCount;
     ALOGI("fts_gesture_switch(%s, SYN_CONFIG=%d) OK", path.c_str(), swVal);
     return true;
 }
@@ -1057,6 +1097,7 @@ static int runSelfTest() {
 
     writeNode(kNodeDoubleTapIndep, "2");
     bool dozeAfterWake2 = gInDoze;
+    int32_t swWritesAfterWake = gGestureSwitchWriteCount;  // MUST still be 1 (no redundant fts_gesture_switch!)
 
     // 4c. nodeFlag=21 "65538" (0x10002 = DT2W+AOD) reads hex "10002", keeps DT2W ON, doze=1;
     //     explicitly disabling DT2W via node1="0" + node21="0" turns DT2W OFF, sw=4, doze=0.
@@ -1068,6 +1109,7 @@ static int runSelfTest() {
     writeNode(kNodeDoubleTapIndep, "0");
     int32_t dtAfterIndepZero = gLastDoubleTapMode;
     int32_t swAfterOff = gLastGestureSwitchMode;
+    int32_t swWritesAfterOff = gGestureSwitchWriteCount;   // MUST be 2 (one transition 5->4)
     bool dozeAfterDisable = gInDoze;
 
     // 5. touchWriteNodeFileOneWay(0, 1, "0") & read back
@@ -1091,16 +1133,17 @@ static int runSelfTest() {
     printf("  indep: aodOnly(dt=%d r='%s' doze=%d) n194(doze=%d) aodOff(dt=%d doze=%d) wake2(doze=%d)\n",
            dtAfterAodOnly, readIndep1.c_str(), dozeAfter65536, dozeAfter194,
            dtAfterAodOff, dozeAfterAodOff, dozeAfterWake2);
-    printf("  indep2: both(dt=%d r='%s' doze=%d) zero(dt=%d sw=%d doze=%d) onewayOff(dt=%d r='%s') awakeDoze=%d\n",
+    printf("  indep2: both(dt=%d r='%s' doze=%d) zero(dt=%d sw=%d doze=%d) onewayOff(dt=%d r='%s') awakeDoze=%d swWrites=(%d,%d)\n",
            dtAfterIndepOn, readIndep2.c_str(), dozeAfter65538, dtAfterIndepZero, swAfterOff,
-           dozeAfterDisable, dtModeAfterOff, readVal2.c_str(), dozeAfterAwakeOn);
+           dozeAfterDisable, dtModeAfterOff, readVal2.c_str(), dozeAfterAwakeOn, swWritesAfterWake, swWritesAfterOff);
 
     return (ver == 2 && hash == kAidlTouchHash && sup1 == 1 && sup21 == 1 && supOther == -2 &&
             wret == 0 && dtModeAfterOn == 1 && swAfterOn == 5 && !dozeAfterAwakeOn &&
             readVal1 == "1" && dtAfterAodOnly == 1 && dozeAfter65536 && dozeAfter194 &&
             readIndep1 == "10000" && dtAfterAodOff == 1 && dozeAfterAodOff && !dozeAfterWake2 &&
+            swWritesAfterWake == 1 &&
             dtAfterIndepOn == 1 && readIndep2 == "10002" && dozeAfter65538 &&
-            dtAfterIndepZero == 0 && swAfterOff == 4 && !dozeAfterDisable &&
+            dtAfterIndepZero == 0 && swAfterOff == 4 && swWritesAfterOff == 2 && !dozeAfterDisable &&
             dtModeAfterOff == 0 && readVal2 == "0" && dozeDetOk)
                    ? 0
                    : 1;
